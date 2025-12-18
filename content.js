@@ -1,57 +1,94 @@
 // content.js
 
-// 從 Google 同步空間讀取帳號密碼
-chrome.storage.sync.get(['moodleUser', 'moodlePass'], (result) => {
-    // 如果沒存密碼，就什麼都不做
+chrome.storage.sync.get(['moodleUser', 'moodlePass', 'isAutoLogin'], async (result) => {
+    // 1. 檢查基本條件
+    if (result.isAutoLogin === false) return;
     if (!result.moodleUser || !result.moodlePass) return;
 
     const currentUrl = window.location.href;
-    console.log("Moodle Helper: 目前網址 ->", currentUrl);
 
     // ---------------------------------------------------------
-    // 情況 1：在學校 SSO 登入頁面 (根據你提供的 HTML)
+    // 情況 1：在學校 SSO 登入頁面
     // ---------------------------------------------------------
-    const usernameField = document.getElementById('Username');
-    const passwordField = document.getElementById('Password');
-    const loginBtn = document.getElementById('loginButton');
-
-    // 如果這三個元素同時存在，代表我們正在 SSO 登入頁面
-    if (usernameField && passwordField && loginBtn) {
-        console.log("Moodle Helper: 偵測到 SSO 登入欄位，開始填寫...");
-        fillAndSubmitSSO(usernameField, passwordField, loginBtn, result.moodleUser, result.moodlePass);
-    } 
-    
-    // ---------------------------------------------------------
-    // 情況 2：在 Moodle 首頁 (尚未按登入)
-    // ---------------------------------------------------------
-    // 判斷邏輯：網址有 moodle 且 網頁內容還沒有顯示學號(代表未登入)
-    else if (currentUrl.includes("moodle") && !document.body.innerText.includes(result.moodleUser)) {
-        // 嘗試抓取 Moodle 常見的登入連結 (通常 href 裡面會有 'login')
-        const moodleLoginLink = document.querySelector('a[href*="login"]');
+    // 這裡我們不再用 if 檢查，而是用 waitForElm 等待元素出現
+    if (currentUrl.includes("sso") || currentUrl.includes("account/login") || document.getElementById('Username')) {
+        console.log("Moodle Helper: 進入 SSO 區域，正在等待欄位載入...");
         
-        if (moodleLoginLink) {
-            console.log("Moodle Helper: 偵測到 Moodle 首頁尚未登入，準備跳轉...");
-            // 延遲一點點再點，避免網頁還沒載入完
+        try {
+            // 等待 #Username 元素真正出現
+            const usernameInput = await waitForElm('#Username');
+            const passwordInput = await waitForElm('#Password');
+            const loginBtn = await waitForElm('#loginButton');
+
+            console.log("Moodle Helper: 欄位已載入，開始填寫");
+            
+            // 為了防止網頁剛載入完瞬間又重整 (造成"not connected"錯誤)
+            // 這裡保留一個極短的緩衝，確認它穩定了
             setTimeout(() => {
-                moodleLoginLink.click();
-            }, 500);
+                fillAndSubmit(usernameInput, passwordInput, loginBtn, result.moodleUser, result.moodlePass);
+            }, 300); // 300ms 緩衝通常已足夠，比寫死 2秒 聰明得多
+
+        } catch (error) {
+            console.log("Moodle Helper: 等待欄位逾時或失敗", error);
         }
+    }
+
+    // ---------------------------------------------------------
+    // 情況 2：在 Moodle 首頁
+    // ---------------------------------------------------------
+    else if (currentUrl.includes("moodle") && !document.body.innerText.includes(result.moodleUser)) {
+        // 同樣可以用 waitForElm 等待登入連結出現
+        waitForElm('a[href*="login"]').then(link => {
+             link.click();
+        });
     }
 });
 
-// 專門處理 SSO 填寫與送出的函式
-function fillAndSubmitSSO(uField, pField, btn, user, pass) {
-    // 1. 填入帳號
-    uField.value = user;
-    uField.dispatchEvent(new Event('input', { bubbles: true })); // 模擬打字事件
 
-    // 2. 填入密碼
-    pField.value = pass;
-    pField.dispatchEvent(new Event('input', { bubbles: true })); // 模擬打字事件
+// 核心功能：填寫並送出
+function fillAndSubmit(uInput, pInput, btn, user, pass) {
+    // 再次檢查元素是否還活著 (防呆)
+    if (!document.body.contains(uInput)) {
+        console.log("Moodle Helper: 元素失效，重新抓取...");
+        uInput = document.getElementById('Username');
+        pInput = document.getElementById('Password');
+        btn = document.getElementById('loginButton');
+    }
 
-    // 3. 稍微等待後點擊登入 (給網頁一點時間檢查欄位)
-    setTimeout(() => {
-        console.log("Moodle Helper: 嘗試點擊登入按鈕...");
-        btn.click();
-    }, 500); // 0.5 秒延遲
+    if (uInput && pInput && btn) {
+        uInput.value = user;
+        uInput.dispatchEvent(new Event('input', { bubbles: true }));
+        
+        pInput.value = pass;
+        pInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+        setTimeout(() => {
+            btn.click();
+        }, 200);
+    }
+}
+
+
+// 工具函式：智慧等待元素出現 (不用死背，這是標準寫法)
+function waitForElm(selector) {
+    return new Promise(resolve => {
+        // A. 如果元素已經在畫面上，直接回傳
+        if (document.querySelector(selector)) {
+            return resolve(document.querySelector(selector));
+        }
+
+        // B. 如果還沒出現，就開啟 MutationObserver 監聽
+        const observer = new MutationObserver(mutations => {
+            if (document.querySelector(selector)) {
+                resolve(document.querySelector(selector));
+                observer.disconnect(); // 找到了就停止監聽，節省效能
+            }
+        });
+
+        // 開始監視 document.body 的變化
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    });
 }
