@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Moodle 自動登入助手",
+  "version": "1.0",
+  "description": "使用 Chrome 同步帳號自動填入 Moodle 登入資訊",
+  "permissions": [
+    "storage" 
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://moodle2.ntust.edu.tw/*",
+        "https://ssoam2.ntust.edu.tw/*"], 
+      "js": ["content.js"]
+    }
+  ]
+}
